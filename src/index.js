@@ -194,6 +194,7 @@ class JanusAdapter {
     clearTimeout(this.reconnectionTimeout);
 
     this.removeAllOccupants();
+    this.leftOccupants = new Set();
 
     if (this.publisher) {
       // Close the publisher peer connection. Which also detaches the plugin handle.
@@ -232,7 +233,10 @@ class JanusAdapter {
     this.connectSuccess(this.clientId);
 
     for (let i = 0; i < this.publisher.initialOccupants.length; i++) {
-      await this.addOccupant(this.publisher.initialOccupants[i]);
+      const occupantId = this.publisher.initialOccupants[i];
+      if (occupantId === this.clientId) continue; // Happens during non-graceful reconnects due to zombie sessions
+
+      await this.addOccupant(occupantId);
     }
   }
 
@@ -272,6 +276,9 @@ class JanusAdapter {
           );
         }
 
+        console.warn("Error during reconnect, retrying.");
+        console.warn(error);
+
         if (this.onReconnecting) {
           this.onReconnecting(this.reconnectionDelay);
         }
@@ -280,11 +287,28 @@ class JanusAdapter {
       });
   }
 
+  performDelayedReconnect() {
+    if (this.delayedReconnectTimeout) {
+      clearTimeout(this.delayedReconnectTimeout);
+    }
+
+    this.delayedReconnectTimeout = setTimeout(() => {
+      this.delayedReconnectTimeout = null;
+      this.reconnect();
+    }, 10000);
+  }
+
   onWebsocketMessage(event) {
     this.session.receive(JSON.parse(event.data));
   }
 
   async addOccupant(occupantId) {
+    if (this.occupants[occupantId]) {
+      this.removeOccupant(occupantId);
+    }
+
+    this.leftOccupants.delete(occupantId);
+
     var subscriber = await this.createSubscriber(occupantId);
 
     if (!subscriber) return;
@@ -337,6 +361,12 @@ class JanusAdapter {
     conn.addEventListener("icecandidate", ev => {
       handle.sendTrickle(ev.candidate || null).catch(e => error("Error trickling ICE: %o", e));
     });
+    conn.addEventListener("iceconnectionstatechange", ev => {
+      if (conn.iceConnectionState === "failed") {
+        console.warn("ICE failure detected. Reconnecting in 10s.");
+        this.performDelayedReconnect();
+      }
+    })
 
     // we have to debounce these because janus gets angry if you send it a new SDP before
     // it's finished processing an existing SDP. in actuality, it seems like this is maybe
@@ -447,6 +477,11 @@ class JanusAdapter {
     }
 
     var initialOccupants = message.plugindata.data.response.users[this.room] || [];
+
+    if (initialOccupants.includes(this.clientId)) {
+      console.warn("Janus still has previous session for this client. Reconnecting in 10s.");
+      this.performDelayedReconnect();
+    }
 
     debug("publisher ready");
     return {
