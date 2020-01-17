@@ -58,13 +58,22 @@ const OPUS_PARAMETERS = {
   "sprop-stereo": 0
 };
 
-const PEER_CONNECTION_CONFIG = {
+let PEER_CONNECTION_CONFIG = {
   iceServers: [{ urls: "stun:stun1.l.google.com:19302" }, { urls: "stun:stun2.l.google.com:19302" }]
 };
 
 const WS_NORMAL_CLOSURE = 1000;
 
 class JanusAdapter {
+    
+  static setGlobalPeerConnectionConfig(iceServers){
+    PEER_CONNECTION_CONFIG = iceServers;
+  }
+
+  static getGlobalPeerConnectionConfig(iceServers){
+    return PEER_CONNECTION_CONFIG;
+  }
+ 
   constructor() {
     this.room = null;
     // We expect the consumer to set a client id before connecting.
