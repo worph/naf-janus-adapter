@@ -193,8 +193,18 @@ class JanusAdapter {
 
       this.ws.addEventListener("open", onOpen);
     });
-
-    return Promise.all([websocketConnection, this.updateTimeOffset()]);
+    websocketConnection.then(value => {
+      debug(`web socket connected`);
+    }).catch(reason => {
+      debug(`web socket error`);
+    });
+    const updateTimeOffsetPromise = this.updateTimeOffset();
+    updateTimeOffsetPromise.then(value => {
+      debug(`updateTimeOffsetPromise ok`);
+    }).catch(reason => {
+      debug(`updateTimeOffsetPromise error`);
+    });
+    return Promise.all([websocketConnection, updateTimeOffsetPromise]);
   }
 
   disconnect() {
