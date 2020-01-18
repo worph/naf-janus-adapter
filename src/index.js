@@ -334,7 +334,9 @@ class JanusAdapter {
 
     this.occupants[occupantId] = subscriber;
 
-    this.setMediaStream(occupantId, subscriber.mediaStream);
+    if(subscriber.mediaStream) {
+      this.setMediaStream(occupantId, subscriber.mediaStream);
+    }
 
     // Call the Networked AFrame callbacks for the new occupant.
     this.onOccupantConnected(occupantId);
