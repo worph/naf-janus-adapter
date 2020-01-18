@@ -557,6 +557,10 @@ class JanusAdapter {
     }
 
     var handle = new mj.JanusPluginHandle(this.session);
+    let webRtcEvent = false;
+    handle.on("webrtcup", () => {
+      webRtcEvent = true;
+    });
     var conn = new RTCPeerConnection(PEER_CONNECTION_CONFIG);
 
     debug(occupantId + ": sub waiting for sfu");
@@ -592,10 +596,21 @@ class JanusAdapter {
         }
       }, 1000);
 
-      handle.on("webrtcup", () => {
+      if(webRtcEvent){
         clearInterval(interval);
         resolve();
-      });
+      }else {
+        handle.on("webrtcup", () => {
+          clearInterval(interval);
+          resolve();
+        });
+      }
+      /*setTimeout(()=>{
+        //resolve anyway after Xs
+        //sometimes webrtcup event is missed by the handle
+        clearInterval(interval);
+        resolve();
+      },5000);*/
     });
 
     if (this.leftOccupants.has(occupantId)) {
