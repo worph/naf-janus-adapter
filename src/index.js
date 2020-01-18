@@ -605,12 +605,12 @@ class JanusAdapter {
           resolve();
         });
       }
-      /*setTimeout(()=>{
+      setTimeout(()=>{
         //resolve anyway after Xs
         //sometimes webrtcup event is missed by the handle
         clearInterval(interval);
         resolve();
-      },5000);*/
+      },5000);
     });
 
     if (this.leftOccupants.has(occupantId)) {
