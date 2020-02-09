@@ -877,6 +877,7 @@ class JanusAdapter {
     stream.getVideoTracks().forEach(track => videoStream.addTrack(track));
 
     this.mediaStreams[clientId] = { audio: audioStream, video: videoStream };
+    debug(`set media stream ${this.mediaStreams[clientId]} for ${clientId}`);
 
     // Resolve the promise for the user's media stream if it exists.
     if (this.pendingMediaRequests.has(clientId)) {
