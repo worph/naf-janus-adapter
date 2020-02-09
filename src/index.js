@@ -336,6 +336,9 @@ class JanusAdapter {
 
     if(subscriber.mediaStream) {
       this.setMediaStream(occupantId, subscriber.mediaStream);
+    }else{
+      debug(`subscriber.mediaStream is null`);
+      console.warn("subscriber.mediaStream is null");
     }
 
     // Call the Networked AFrame callbacks for the new occupant.
