@@ -390,7 +390,7 @@ class JanusAdapter {
         console.warn("ICE failure detected. Reconnecting in 10s.");
         this.performDelayedReconnect();
       }
-    })
+    });
 
     // we have to debounce these because janus gets angry if you send it a new SDP before
     // it's finished processing an existing SDP. in actuality, it seems like this is maybe
@@ -423,7 +423,12 @@ class JanusAdapter {
             .then(this.fixSafariIceUFrag);
           var local = answer.then(a => conn.setLocalDescription(a));
           var remote = answer.then(j => handle.sendJsep(j));
-          return Promise.all([local, remote]).catch(e => error("Error negotiating answer: %o", e));
+          return Promise.all([local, remote]).catch((e) => {
+            error("Error negotiating answer: %o", e)
+            //try recover from error by disabling video
+            this.noWebRTCVideoFlag = true;
+            this.reconnect();
+          });
         } else {
           // some other kind of event, nothing to do
           return null;
@@ -526,6 +531,11 @@ class JanusAdapter {
   }
 
   configureSubscriberSdp(jsep) {
+    if(this.noWebRTCVideoFlag){
+      //no video mode
+      jsep.sdp = jsep.sdp.replace(/m=video[^]*m=/, "m=");
+    }
+
     // todo: consider cleaning up these hacks to use sdputils
     if (!isH264VideoSupported) {
       if (navigator.userAgent.indexOf("HeadlessChrome") !== -1) {
