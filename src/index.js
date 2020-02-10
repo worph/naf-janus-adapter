@@ -46,7 +46,7 @@ function untilDataChannelOpen(dataChannel) {
 
 const isH264VideoSupported = (() => {
   const video = document.createElement("video");
-  return video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') !== "";
+  return video.canPlayType("video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"") !== "";
 })();
 
 const OPUS_PARAMETERS = {
@@ -65,15 +65,15 @@ let PEER_CONNECTION_CONFIG = {
 const WS_NORMAL_CLOSURE = 1000;
 
 class JanusAdapter {
-    
-  static setGlobalPeerConnectionConfig(iceServers){
+
+  static setGlobalPeerConnectionConfig(iceServers) {
     PEER_CONNECTION_CONFIG = iceServers;
   }
 
-  static getGlobalPeerConnectionConfig(iceServers){
+  static getGlobalPeerConnectionConfig(iceServers) {
     return PEER_CONNECTION_CONFIG;
   }
- 
+
   constructor() {
     this.room = null;
     // We expect the consumer to set a client id before connecting.
@@ -120,7 +120,8 @@ class JanusAdapter {
     this.serverUrl = url;
   }
 
-  setApp(app) {}
+  setApp(app) {
+  }
 
   setRoom(roomName) {
     this.room = roomName;
@@ -168,7 +169,7 @@ class JanusAdapter {
     const websocketConnection = new Promise((resolve, reject) => {
       this.ws = new WebSocket(this.serverUrl, "janus-protocol");
 
-      this.session = new mj.JanusSession(this.ws.send.bind(this.ws),{
+      this.session = new mj.JanusSession(this.ws.send.bind(this.ws), {
         verbose: false,
         timeoutMs: 60000,
         keepaliveMs: 40000
@@ -328,15 +329,21 @@ class JanusAdapter {
 
     this.leftOccupants.delete(occupantId);
 
-    var subscriber = await this.createSubscriber(occupantId);
+    let subscriber = null;
+    try {
+      subscriber = await this.createSubscriber(occupantId, true,true);
+    } catch (e) {
+      console.warn(occupantId+" has no video support");
+      subscriber = await this.createSubscriber(occupantId, false,false);
+    }
 
     if (!subscriber) return;
 
     this.occupants[occupantId] = subscriber;
 
-    if(subscriber.mediaStream) {
+    if (subscriber.mediaStream) {
       this.setMediaStream(occupantId, subscriber.mediaStream);
-    }else{
+    } else {
       debug(`subscriber.mediaStream is null`);
       console.warn("subscriber.mediaStream is null");
     }
@@ -381,14 +388,23 @@ class JanusAdapter {
     }
   }
 
-  associate(conn, handle) {
+  associate(conn, handle, videoSupport, reject) {
+    if (!reject) {
+      reject = () => {
+      };
+    }
+    this.noWebRTCVideoFlag = !!videoSupport;
     conn.addEventListener("icecandidate", ev => {
-      handle.sendTrickle(ev.candidate || null).catch(e => error("Error trickling ICE: %o", e));
+      handle.sendTrickle(ev.candidate || null).catch((e) => {
+        error("Error trickling ICE: %o", e);
+        reject();
+      });
     });
     conn.addEventListener("iceconnectionstatechange", ev => {
       if (conn.iceConnectionState === "failed") {
         console.warn("ICE failure detected. Reconnecting in 10s.");
         this.performDelayedReconnect();
+        reject();
       }
     });
 
@@ -408,14 +424,17 @@ class JanusAdapter {
           .then(this.fixSafariIceUFrag)
           .then(j => handle.sendJsep(j))
           .then(r => conn.setRemoteDescription(r.jsep));
-        return Promise.all([local, remote]).catch(e => error("Error negotiating offer: %o", e));
+        return Promise.all([local, remote]).catch((e) => {
+          error("Error negotiating offer: %o", e);
+          reject();
+        });
       })
     );
     handle.on(
       "event",
       debounce(ev => {
         var jsep = ev.jsep;
-        if (jsep && jsep.type == "offer") {
+        if (jsep && jsep.type === "offer") {
           debug("Accepting new offer for handle: %o", handle);
           var answer = conn
             .setRemoteDescription(this.configureSubscriberSdp(jsep))
@@ -424,10 +443,8 @@ class JanusAdapter {
           var local = answer.then(a => conn.setLocalDescription(a));
           var remote = answer.then(j => handle.sendJsep(j));
           return Promise.all([local, remote]).catch((e) => {
-            error("Error negotiating answer: %o", e)
-            //try recover from error by disabling video
-            this.noWebRTCVideoFlag = true;
-            this.reconnect();
+            error("Error negotiating answer: %o", e);
+            reject();
           });
         } else {
           // some other kind of event, nothing to do
@@ -531,11 +548,11 @@ class JanusAdapter {
   }
 
   configureSubscriberSdp(jsep) {
-    if(this.noWebRTCVideoFlag){
+    if (this.noWebRTCVideoFlag) {
       //no video mode
       jsep.sdp = jsep.sdp.replace(/m=video[^]*m=/, "m=");
-      jsep.sdp = jsep.sdp.replace("a=mid:video","a=");
-      jsep.sdp = jsep.sdp.replace("a=group:BUNDLE audio video data","a=group:BUNDLE audio data");
+      jsep.sdp = jsep.sdp.replace("a=mid:video", "a=");
+      jsep.sdp = jsep.sdp.replace("a=group:BUNDLE audio video data", "a=group:BUNDLE audio data");
     }
 
     // todo: consider cleaning up these hacks to use sdputils
@@ -564,10 +581,10 @@ class JanusAdapter {
   async fixSafariIceUFrag(jsep) {
     // Safari produces a \n instead of an \r\n for the ice-ufrag. See https://github.com/meetecho/janus-gateway/issues/1818
     jsep.sdp = jsep.sdp.replace(/[^\r]\na=ice-ufrag/g, "\r\na=ice-ufrag");
-    return jsep
+    return jsep;
   }
 
-  async createSubscriber(occupantId) {
+  async createSubscriber(occupantId, videoSupport,rejectOnTimeOut) {
     if (this.leftOccupants.has(occupantId)) {
       console.warn(occupantId + ": cancelled occupant connection, occupant left before subscription negotation.");
       return null;
@@ -583,29 +600,32 @@ class JanusAdapter {
     debug(occupantId + ": sub waiting for sfu");
     await handle.attach("janus.plugin.sfu");
 
-    this.associate(conn, handle);
+    await new Promise(async (resolve, reject) => {
 
-    debug(occupantId + ": sub waiting for join");
+      this.associate(conn, handle, videoSupport, () => {
+        reject();
+      });
 
-    if (this.leftOccupants.has(occupantId)) {
-      conn.close();
-      console.warn(occupantId + ": cancelled occupant connection, occupant left after attach");
-      return null;
-    }
+      debug(occupantId + ": sub waiting for join");
 
-    // Send join message to janus. Don't listen for join/leave messages. Subscribe to the occupant's media.
-    // Janus should send us an offer for this occupant's media in response to this.
-    const resp = await this.sendJoin(handle, { media: occupantId });
+      if (this.leftOccupants.has(occupantId)) {
+        conn.close();
+        console.warn(occupantId + ": cancelled occupant connection, occupant left after attach");
+        return null;
+      }
 
-    if (this.leftOccupants.has(occupantId)) {
-      conn.close();
-      console.warn(occupantId + ": cancelled occupant connection, occupant left after join");
-      return null;
-    }
+      // Send join message to janus. Don't listen for join/leave messages. Subscribe to the occupant's media.
+      // Janus should send us an offer for this occupant's media in response to this.
+      const resp = await this.sendJoin(handle, { media: occupantId });
 
-    debug(occupantId + ": sub waiting for webrtcup");
+      if (this.leftOccupants.has(occupantId)) {
+        conn.close();
+        console.warn(occupantId + ": cancelled occupant connection, occupant left after join");
+        return null;
+      }
 
-    await new Promise((resolve,reject) => {
+      debug(occupantId + ": sub waiting for webrtcup");
+
       const interval = setInterval(() => {
         if (this.leftOccupants.has(occupantId)) {
           clearInterval(interval);
@@ -613,25 +633,32 @@ class JanusAdapter {
         }
       }, 1000);
 
-      if(webRtcEvent){
+      if (webRtcEvent) {
         clearInterval(interval);
         resolve();
-      }else {
+      } else {
         handle.on("webrtcup", () => {
           clearInterval(interval);
           resolve();
         });
       }
-      setTimeout(()=>{
+      setTimeout(() => {
         //resolve anyway after Xs
         //sometimes webrtcup event is missed by the handle
-        if(conn.iceConnectionState==="connected") {
+        if (conn.iceConnectionState === "connected") {
           clearInterval(interval);
           resolve();
-        }else{
-          console.error("no webrtcup after 10s")
+        } else {
+          console.error("no webrtcup after 10s");
+          if(rejectOnTimeOut){
+            clearInterval(interval);
+            reject();
+          }else{
+            clearInterval(interval);
+            resolve();
+          }
         }
-      },10000);
+      }, 10000);
     });
 
     if (this.leftOccupants.has(occupantId)) {
@@ -657,9 +684,6 @@ class JanusAdapter {
     if (mediaStream.getTracks().length === 0) {
       mediaStream = null;
     }
-    conn.ontrack=(event)=>{
-      console.log("new track:",event);
-    };
 
     debug(occupantId + ": subscriber ready");
     return {
@@ -724,7 +748,7 @@ class JanusAdapter {
     // Ignore messages from users that we may have blocked while frozen.
     if (data.owner && this.blockedClients.has(data.owner)) return null;
 
-    return data
+    return data;
   }
 
   // Used externally
@@ -818,9 +842,11 @@ class JanusAdapter {
     return true;
   }
 
-  startStreamConnection(client) {}
+  startStreamConnection(client) {
+  }
 
-  closeStreamConnection(client) {}
+  closeStreamConnection(client) {
+  }
 
   getConnectStatus(clientId) {
     return this.occupants[clientId] ? NAF.adapters.IS_CONNECTED : NAF.adapters.NOT_CONNECTED;
@@ -927,7 +953,7 @@ class JanusAdapter {
             await sender.replaceTrack(t);
 
             // Workaround https://bugzilla.mozilla.org/show_bug.cgi?id=1576771
-            if (t.kind === "video" && t.enabled && navigator.userAgent.toLowerCase().indexOf('firefox') > -1) {
+            if (t.kind === "video" && t.enabled && navigator.userAgent.toLowerCase().indexOf("firefox") > -1) {
               t.enabled = false;
               setTimeout(() => t.enabled = true, 1000);
             }
@@ -1036,7 +1062,12 @@ class JanusAdapter {
   }
 
   kick(clientId, permsToken) {
-    return this.publisher.handle.sendMessage({ kind: "kick", room_id: this.room, user_id: clientId, token: permsToken }).then(() => {
+    return this.publisher.handle.sendMessage({
+      kind: "kick",
+      room_id: this.room,
+      user_id: clientId,
+      token: permsToken
+    }).then(() => {
       document.body.dispatchEvent(new CustomEvent("kicked", { detail: { clientId: clientId } }));
     });
   }
