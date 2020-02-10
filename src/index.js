@@ -534,6 +534,8 @@ class JanusAdapter {
     if(this.noWebRTCVideoFlag){
       //no video mode
       jsep.sdp = jsep.sdp.replace(/m=video[^]*m=/, "m=");
+      jsep.sdp = jsep.sdp.replace("a=mid:video","a=");
+      jsep.sdp = jsep.sdp.replace("a=group:BUNDLE audio video data","a=group:BUNDLE audio data");
     }
 
     // todo: consider cleaning up these hacks to use sdputils
