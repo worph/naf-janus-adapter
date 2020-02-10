@@ -593,7 +593,7 @@ class JanusAdapter {
 
     debug(occupantId + ": sub waiting for webrtcup");
 
-    await new Promise(resolve => {
+    await new Promise((resolve,reject) => {
       const interval = setInterval(() => {
         if (this.leftOccupants.has(occupantId)) {
           clearInterval(interval);
@@ -613,9 +613,13 @@ class JanusAdapter {
       setTimeout(()=>{
         //resolve anyway after Xs
         //sometimes webrtcup event is missed by the handle
-        clearInterval(interval);
-        resolve();
-      },5000);
+        if(conn.iceConnectionState==="connected") {
+          clearInterval(interval);
+          resolve();
+        }else{
+          console.error("no webrtcup after 10s")
+        }
+      },10000);
     });
 
     if (this.leftOccupants.has(occupantId)) {
@@ -641,6 +645,9 @@ class JanusAdapter {
     if (mediaStream.getTracks().length === 0) {
       mediaStream = null;
     }
+    conn.ontrack=(event)=>{
+      console.log("new track:",event);
+    };
 
     debug(occupantId + ": subscriber ready");
     return {
