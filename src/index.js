@@ -5,6 +5,8 @@ var warn = require("debug")("naf-janus-adapter:warn");
 var error = require("debug")("naf-janus-adapter:error");
 var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
+const SUBSCRIBE_TIMEOUT_MS = 15000;
+
 function debounce(fn) {
   var curr = Promise.resolve();
   return function() {
@@ -58,7 +60,7 @@ const OPUS_PARAMETERS = {
   "sprop-stereo": 0
 };
 
-let PEER_CONNECTION_CONFIG = {
+let DEFAULT_PEER_CONNECTION_CONFIG = {
   iceServers: [{ urls: "stun:stun1.l.google.com:19302" }, { urls: "stun:stun2.l.google.com:19302" }]
 };
 
@@ -67,7 +69,7 @@ const WS_NORMAL_CLOSURE = 1000;
 class JanusAdapter {
 
   static setGlobalPeerConnectionConfig(iceServers) {
-    PEER_CONNECTION_CONFIG = iceServers;
+    DEFAULT_PEER_CONNECTION_CONFIG = iceServers;
   }
 
   static getGlobalPeerConnectionConfig(iceServers) {
@@ -82,6 +84,7 @@ class JanusAdapter {
 
     this.serverUrl = null;
     this.webRtcOptions = {};
+    this.peerConnectionConfig = null;
     this.ws = null;
     this.session = null;
     this.reliableTransport = "datachannel";
@@ -137,6 +140,10 @@ class JanusAdapter {
 
   setWebRtcOptions(options) {
     this.webRtcOptions = options;
+  }
+
+  setPeerConnectionConfig(peerConnectionConfig) {
+    this.peerConnectionConfig = peerConnectionConfig;
   }
 
   setServerConnectListeners(successListener, failureListener) {
@@ -252,12 +259,15 @@ class JanusAdapter {
     // Call the naf connectSuccess callback before we start receiving WebRTC messages.
     this.connectSuccess(this.clientId);
 
+    const addOccupantPromises = [];
+
     for (let i = 0; i < this.publisher.initialOccupants.length; i++) {
       const occupantId = this.publisher.initialOccupants[i];
       if (occupantId === this.clientId) continue; // Happens during non-graceful reconnects due to zombie sessions
-
-      await this.addOccupant(occupantId);
+      addOccupantPromises.push(this.addOccupant(occupantId));
     }
+
+    await Promise.all(addOccupantPromises);
   }
 
   onWebsocketClose(event) {
@@ -331,10 +341,10 @@ class JanusAdapter {
 
     let subscriber = null;
     try {
-      subscriber = await this.createSubscriber(occupantId, true,true);
+      subscriber = await this.createSubscriber(occupantId, true, true);
     } catch (e) {
-      console.warn(occupantId+" has no video support");
-      subscriber = await this.createSubscriber(occupantId, false,false);
+      console.warn(occupantId + " has no video support");
+      subscriber = await this.createSubscriber(occupantId, false, false);
     }
 
     if (!subscriber) return;
@@ -456,7 +466,7 @@ class JanusAdapter {
 
   async createPublisher() {
     var handle = new mj.JanusPluginHandle(this.session);
-    var conn = new RTCPeerConnection(PEER_CONNECTION_CONFIG);
+    var conn = new RTCPeerConnection(this.peerConnectionConfig || DEFAULT_PEER_CONNECTION_CONFIG);
 
     debug("pub waiting for sfu");
     await handle.attach("janus.plugin.sfu");
@@ -584,7 +594,7 @@ class JanusAdapter {
     return jsep;
   }
 
-  async createSubscriber(occupantId, videoSupport,rejectOnTimeOut) {
+  async createSubscriber(occupantId, videoSupport, rejectOnTimeOut) {
     if (this.leftOccupants.has(occupantId)) {
       console.warn(occupantId + ": cancelled occupant connection, occupant left before subscription negotation.");
       return null;
@@ -595,75 +605,65 @@ class JanusAdapter {
     handle.on("webrtcup", () => {
       webRtcEvent = true;
     });
-    var conn = new RTCPeerConnection(PEER_CONNECTION_CONFIG);
+    var conn = new RTCPeerConnection(this.peerConnectionConfig || DEFAULT_PEER_CONNECTION_CONFIG);
 
     debug(occupantId + ": sub waiting for sfu");
     await handle.attach("janus.plugin.sfu");
 
-    await new Promise(async (resolve, reject) => {
+    this.associate(conn, handle, videoSupport, () => {
+      reject();
+    });
 
-      this.associate(conn, handle, videoSupport, () => {
-        reject();
-      });
+    debug(occupantId + ": sub waiting for join");
 
-      debug(occupantId + ": sub waiting for join");
+    if (this.leftOccupants.has(occupantId)) {
+      conn.close();
+      console.warn(occupantId + ": cancelled occupant connection, occupant left after attach");
+      return null;
+    }
 
-      if (this.leftOccupants.has(occupantId)) {
-        conn.close();
-        console.warn(occupantId + ": cancelled occupant connection, occupant left after attach");
-        return null;
-      }
+    let webrtcFailed = false;
 
-      // Send join message to janus. Don't listen for join/leave messages. Subscribe to the occupant's media.
-      // Janus should send us an offer for this occupant's media in response to this.
-      const resp = await this.sendJoin(handle, { media: occupantId });
-
-      if (this.leftOccupants.has(occupantId)) {
-        conn.close();
-        console.warn(occupantId + ": cancelled occupant connection, occupant left after join");
-        return null;
-      }
-
-      debug(occupantId + ": sub waiting for webrtcup");
-
-      const interval = setInterval(() => {
+    const webrtcup = new Promise(resolve => {
+      const leftInterval = setInterval(() => {
         if (this.leftOccupants.has(occupantId)) {
-          clearInterval(interval);
+          clearInterval(leftInterval);
           resolve();
         }
       }, 1000);
 
-      if (webRtcEvent) {
-        clearInterval(interval);
+      const timeout = setTimeout(() => {
+        clearInterval(leftInterval);
+        webrtcFailed = true;
         resolve();
-      } else {
-        handle.on("webrtcup", () => {
-          clearInterval(interval);
-          resolve();
-        });
-      }
-      setTimeout(() => {
-        //resolve anyway after Xs
-        //sometimes webrtcup event is missed by the handle
-        if (conn.iceConnectionState === "connected") {
-          clearInterval(interval);
-          resolve();
-        } else {
-          console.error("no webrtcup after 10s");
-          if(rejectOnTimeOut){
-            clearInterval(interval);
-            reject();
-          }else{
-            clearInterval(interval);
-            resolve();
-          }
-        }
-      }, 10000);
+      }, SUBSCRIBE_TIMEOUT_MS);
+
+      handle.on("webrtcup", () => {
+        clearTimeout(timeout);
+        clearInterval(leftInterval);
+        resolve();
+      });
     });
+
+    // Send join message to janus. Don't listen for join/leave messages. Subscribe to the occupant's media.
+    // Janus should send us an offer for this occupant's media in response to this.
+    const resp = await this.sendJoin(handle, { media: occupantId });
 
     if (this.leftOccupants.has(occupantId)) {
       conn.close();
+      console.warn(occupantId + ": cancelled occupant connection, occupant left after join");
+      return null;
+    }
+    debug(occupantId + ": sub waiting for webrtcup");
+    await webrtcup;
+    if (this.leftOccupants.has(occupantId)) {
+      conn.close();
       console.warn(occupantId + ": cancel occupant connection, occupant left during or after webrtcup");
+      return null;
+    }
+    if (webrtcFailed) {
+      conn.close();
+      console.warn(occupantId + ": webrtc up timed out");
       return null;
     }
 
