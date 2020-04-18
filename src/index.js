@@ -48,7 +48,7 @@ function untilDataChannelOpen(dataChannel) {
 
 const isH264VideoSupported = (() => {
   const video = document.createElement("video");
-  return video.canPlayType("video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"") !== "";
+  return video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') !== "";
 })();
 
 const OPUS_PARAMETERS = {
@@ -123,8 +123,7 @@ class JanusAdapter {
     this.serverUrl = url;
   }
 
-  setApp(app) {
-  }
+  setApp(app) {}
 
   setRoom(roomName) {
     this.room = roomName;
@@ -444,7 +443,7 @@ class JanusAdapter {
       "event",
       debounce(ev => {
         var jsep = ev.jsep;
-        if (jsep && jsep.type === "offer") {
+        if (jsep && jsep.type == "offer") {
           debug("Accepting new offer for handle: %o", handle);
           var answer = conn
             .setRemoteDescription(this.configureSubscriberSdp(jsep))
@@ -601,10 +600,6 @@ class JanusAdapter {
     }
 
     var handle = new mj.JanusPluginHandle(this.session);
-    let webRtcEvent = false;
-    handle.on("webrtcup", () => {
-      webRtcEvent = true;
-    });
     var conn = new RTCPeerConnection(this.peerConnectionConfig || DEFAULT_PEER_CONNECTION_CONFIG);
 
     debug(occupantId + ": sub waiting for sfu");
@@ -842,11 +837,9 @@ class JanusAdapter {
     return true;
   }
 
-  startStreamConnection(client) {
-  }
+  startStreamConnection(client) {}
 
-  closeStreamConnection(client) {
-  }
+  closeStreamConnection(client) {}
 
   getConnectStatus(clientId) {
     return this.occupants[clientId] ? NAF.adapters.IS_CONNECTED : NAF.adapters.NOT_CONNECTED;
@@ -953,7 +946,7 @@ class JanusAdapter {
             await sender.replaceTrack(t);
 
             // Workaround https://bugzilla.mozilla.org/show_bug.cgi?id=1576771
-            if (t.kind === "video" && t.enabled && navigator.userAgent.toLowerCase().indexOf("firefox") > -1) {
+            if (t.kind === "video" && t.enabled && navigator.userAgent.toLowerCase().indexOf('firefox') > -1) {
               t.enabled = false;
               setTimeout(() => t.enabled = true, 1000);
             }
@@ -1062,12 +1055,7 @@ class JanusAdapter {
   }
 
   kick(clientId, permsToken) {
-    return this.publisher.handle.sendMessage({
-      kind: "kick",
-      room_id: this.room,
-      user_id: clientId,
-      token: permsToken
-    }).then(() => {
+    return this.publisher.handle.sendMessage({ kind: "kick", room_id: this.room, user_id: clientId, token: permsToken }).then(() => {
       document.body.dispatchEvent(new CustomEvent("kicked", { detail: { clientId: clientId } }));
     });
   }
